@@ -1,0 +1,124 @@
+function onOpen() {
+  const ui = SpreadsheetApp.getUi();
+  ui.createMenu("📆 HRA Tools")
+    .addItem("Create New Month Sheet", "createMonthlySheet")
+    .addToUi();
+}
+
+function createMonthlySheet() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ui = SpreadsheetApp.getUi();
+
+  // Detect existing month sheets
+  const monthSheets = ss.getSheets()
+    .map(sh => sh.getName())
+    .filter(name => /^[A-Za-z]+\'\d{2}$/.test(name)); // Match Month'YY format
+
+  if (monthSheets.length === 0) {
+    ui.alert("No existing month sheets found in Month'YY format.");
+    return;
+  }
+
+  const monthOrder = [
+    "January", "February", "March", "April", "May", "June",
+    "July", "August", "September", "October", "November", "December"
+  ];
+
+  // Sort to find latest month
+  monthSheets.sort((a, b) => {
+    const [monthA, yearA] = a.split("'");
+    const [monthB, yearB] = b.split("'");
+    const dateA = new Date(`20${yearA}`, monthOrder.indexOf(monthA), 1);
+    const dateB = new Date(`20${yearB}`, monthOrder.indexOf(monthB), 1);
+    return dateA - dateB;
+  });
+
+  const latestMonthName = monthSheets[monthSheets.length - 1];
+
+  // Calculate next month name
+  const [lastMonth, lastYear] = latestMonthName.split("'");
+  let nextMonthIndex = monthOrder.indexOf(lastMonth) + 1;
+  let nextYear = parseInt("20" + lastYear, 10);
+  if (nextMonthIndex === 12) { // wrap to January
+    nextMonthIndex = 0;
+    nextYear += 1;
+  }
+  const suggestedMonthName = `${monthOrder[nextMonthIndex]}'${String(nextYear).slice(-2)}`;
+
+  // Ask user for month name (with suggestion)
+  const response = ui.prompt(
+    "Enter new month sheet name:",
+    `Suggested: ${suggestedMonthName}`,
+    ui.ButtonSet.OK_CANCEL
+  );
+  if (response.getSelectedButton() !== ui.Button.OK) return;
+
+  const monthName = response.getResponseText().trim() || suggestedMonthName;
+
+  // Check if sheet already exists
+  if (ss.getSheetByName(monthName)) {
+    ui.alert("A sheet with this name already exists.");
+    return;
+  }
+
+  // Copy latest month sheet as template
+  const templateSheet = ss.getSheetByName(latestMonthName);
+  const newSheet = templateSheet.copyTo(ss).setName(monthName);
+
+  // Get master data
+  const masterSheet = ss.getSheetByName("Master");
+  const masterData = masterSheet.getDataRange().getValues();
+
+  // Column indexes in Master
+  const empNameIndex = 0; // Column A
+  const basicIndex = 5;   // Column F
+  const hraIndex = 6;     // Column G
+  const convIndex = 7;    // Column H
+  const ltaIndex = 8;     // Column I
+  const phoneIndex = 9;   // Column J
+  const otherIndex = 10;  // Column K
+  const grossIndex = 11;  // Column L
+
+  // === Set headers in row 3, B → I ===
+  const headers = ["Employee Name", "BASIC", "HRA", "Conveyance Allowances", "LTA", "Phone Allowance", "Other Allowance", "GROSS (CTC)"];
+  newSheet.getRange(3, 2, 1, headers.length).setValues([headers]);
+
+  // === Build data array from Master ===
+  const pasteValues = [];
+  for (let i = 1; i < masterData.length; i++) { // Skip header in Master
+    const empName = masterData[i][empNameIndex];
+    if (!empName) continue;
+
+    pasteValues.push([
+      masterData[i][empNameIndex],  // Employee Name → B
+      masterData[i][basicIndex],    // BASIC → C
+      masterData[i][hraIndex],      // HRA → D
+      masterData[i][convIndex],     // Conveyance → E
+      masterData[i][ltaIndex],      // LTA → F
+      masterData[i][phoneIndex],    // Phone → G
+      masterData[i][otherIndex],    // Other → H
+      masterData[i][grossIndex]     // Gross → I
+    ]);
+  }
+
+  // Paste data starting row 4
+  newSheet.getRange(4, 2, pasteValues.length, pasteValues[0].length).setValues(pasteValues);
+
+  // === CLEAR SPECIFIC COLUMNS FOR ATTENDANCE/LEAVES ===
+  const lastRow = newSheet.getLastRow();
+
+  // Attendance columns J → AN (10 to 40), start from row 4
+  newSheet.getRange(4, 10, lastRow - 3, 31).clearContent();
+
+  // CL TAKEN (BA = col 53) & EL TAKEN (BB = col 54), start from row 4
+  newSheet.getRange(4, 53, lastRow - 3, 2).clearContent();
+
+  // Skip BC (col 55) and clear BD → BI (col 56 to 61), start from row 4
+  newSheet.getRange(4, 56, lastRow - 3, 6).clearContent();
+
+  // === SET month name only in cell A2 ===
+  const monthOnly = monthName.split("'")[0];
+  newSheet.getRange("A2").setValue(monthOnly);
+
+  ui.alert("Next Month's Salary Sheet Created with proper headers and cleared attendance/leave columns!");
+}
